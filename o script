@@ -1,0 +1,713 @@
+-- ============================================
+-- SISTEMA DE PRECISÃO COMPLETO - VERSÃO CORRIGIDA
+-- LocalScript dentro de StarterPlayerScripts
+-- ============================================
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
+local GuiService = game:GetService("GuiService")
+
+local player = Players.LocalPlayer
+local mouse = player:GetMouse()
+local camera = Workspace.CurrentCamera
+
+-- ============================================
+-- CONFIGURAÇÕES
+-- ============================================
+local CONFIG = {
+    -- Aim Assist (agora apenas visual, sem mover o mouse)
+    AimRadius = 150,
+    MagnetRadius = 75,
+    MaxAimDistance = 300,
+    
+    -- Magnet Grab
+    GrabRadius = 20,
+    GrabTime = 1.0,
+    PullSpeed = 20,
+    
+    -- Economy
+    StartingMoney = 1000,
+    
+    -- Cores
+    NeonColor = Color3.fromRGB(0, 255, 255),
+    NeonPink = Color3.fromRGB(255, 0, 255),
+    NeonGreen = Color3.fromRGB(0, 255, 0)
+}
+
+-- ============================================
+-- CRIAR REMOTES (SE NÃO EXISTIREM)
+-- ============================================
+local function SetupRemotes()
+    local remotesFolder = ReplicatedStorage:FindFirstChild("PrecisionRemotes")
+    if not remotesFolder then
+        remotesFolder = Instance.new("Folder")
+        remotesFolder.Name = "PrecisionRemotes"
+        remotesFolder.Parent = ReplicatedStorage
+    end
+    
+    -- Remote para puxar itens
+    local grabRemote = remotesFolder:FindFirstChild("GrabItem")
+    if not grabRemote then
+        grabRemote = Instance.new("RemoteFunction")
+        grabRemote.Name = "GrabItem"
+        grabRemote.Parent = remotesFolder
+    end
+    
+    -- Remote para pegar dinheiro
+    local moneyRemote = remotesFolder:FindFirstChild("CollectMoney")
+    if not moneyRemote then
+        moneyRemote = Instance.new("RemoteFunction")
+        moneyRemote.Name = "CollectMoney"
+        moneyRemote.Parent = remotesFolder
+    end
+    
+    return {GrabItem = grabRemote, CollectMoney = moneyRemote}
+end
+
+-- ============================================
+-- UI COMPLETA
+-- ============================================
+local function CreateUI()
+    local screenGui = Instance.new("ScreenGui")
+    screenGui.Name = "PrecisionUI"
+    screenGui.IgnoreGuiInset = true
+    screenGui.ResetOnSpawn = false
+    screenGui.Parent = player:WaitForChild("PlayerGui")
+    
+    -- Fundo escuro semi-transparente (efeito profissional)
+    local backgroundFade = Instance.new("Frame")
+    backgroundFade.Size = UDim2.new(1, 0, 1, 0)
+    backgroundFade.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+    backgroundFade.BackgroundTransparency = 0.85
+    backgroundFade.Parent = screenGui
+    
+    -- Container principal
+    local mainContainer = Instance.new("Frame")
+    mainContainer.Name = "MainContainer"
+    mainContainer.Size = UDim2.new(1, 0, 1, 0)
+    mainContainer.BackgroundTransparency = 1
+    mainContainer.Parent = screenGui
+    
+    -- ===== MIRA PERSONALIZADA =====
+    local crosshairContainer = Instance.new("Frame")
+    crosshairContainer.Size = UDim2.new(0, 100, 0, 100)
+    crosshairContainer.Position = UDim2.new(0.5, -50, 0.5, -50)
+    crosshairContainer.BackgroundTransparency = 1
+    crosshairContainer.Parent = mainContainer
+    
+    -- Linhas da mira (estilo profissional)
+    local lines = {
+        {Position = UDim2.new(0.5, -30, 0.5, -1.5), Size = UDim2.new(0, 25, 0, 3)},
+        {Position = UDim2.new(0.5, 5, 0.5, -1.5), Size = UDim2.new(0, 25, 0, 3)},
+        {Position = UDim2.new(0.5, -1.5, 0.5, -30), Size = UDim2.new(0, 3, 0, 25)},
+        {Position = UDim2.new(0.5, -1.5, 0.5, 5), Size = UDim2.new(0, 3, 0, 25)}
+    }
+    
+    for _, data in pairs(lines) do
+        local line = Instance.new("Frame")
+        line.Size = data.Size
+        line.Position = data.Position
+        line.BackgroundColor3 = CONFIG.NeonColor
+        line.BackgroundTransparency = 0.2
+        line.BorderSizePixel = 0
+        line.Parent = crosshairContainer
+        
+        local corner = Instance.new("UICorner")
+        corner.CornerRadius = UDim.new(0, 2)
+        corner.Parent = line
+    end
+    
+    -- Ponto central
+    local centerDot = Instance.new("Frame")
+    centerDot.Size = UDim2.new(0, 4, 0, 4)
+    centerDot.Position = UDim2.new(0.5, -2, 0.5, -2)
+    centerDot.BackgroundColor3 = CONFIG.NeonColor
+    centerDot.BackgroundTransparency = 0.1
+    centerDot.BorderSizePixel = 0
+    centerDot.Parent = crosshairContainer
+    
+    local dotCorner = Instance.new("UICorner")
+    dotCorner.CornerRadius = UDim.new(1, 0)
+    dotCorner.Parent = centerDot
+    
+    -- Círculo externo (FOV)
+    local outerRing = Instance.new("ImageLabel")
+    outerRing.Size = UDim2.new(0, 80, 0, 80)
+    outerRing.Position = UDim2.new(0.5, -40, 0.5, -40)
+    outerRing.BackgroundTransparency = 1
+    outerRing.Image = "rbxassetid://0"
+    outerRing.ImageTransparency = 0.8
+    outerRing.ImageColor3 = CONFIG.NeonColor
+    outerRing.ZIndex = 0
+    outerRing.Parent = crosshairContainer
+    
+    -- Animação da mira
+    local pulseTween = TweenService:Create(outerRing, 
+        TweenInfo.new(1, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
+        {ImageTransparency = 0.5, ImageColor3 = CONFIG.NeonPink}
+    )
+    pulseTween:Play()
+    
+    -- ===== BARRA DE PROGRESSO =====
+    local magnetFrame = Instance.new("Frame")
+    magnetFrame.Name = "MagnetFrame"
+    magnetFrame.Size = UDim2.new(0, 350, 0, 50)
+    magnetFrame.Position = UDim2.new(0.5, -175, 0.85, 0)
+    magnetFrame.BackgroundTransparency = 1
+    magnetFrame.Visible = false
+    magnetFrame.Parent = mainContainer
+    
+    local progressBg = Instance.new("Frame")
+    progressBg.Size = UDim2.new(1, 0, 0, 8)
+    progressBg.Position = UDim2.new(0, 0, 0.5, -4)
+    progressBg.BackgroundColor3 = Color3.fromRGB(30, 30, 50)
+    progressBg.BackgroundTransparency = 0.4
+    progressBg.BorderSizePixel = 1
+    progressBg.BorderColor3 = CONFIG.NeonColor
+    progressBg.Parent = magnetFrame
+    
+    local progressFill = Instance.new("Frame")
+    progressFill.Size = UDim2.new(0, 0, 1, 0)
+    progressFill.BackgroundColor3 = CONFIG.NeonColor
+    progressFill.BackgroundTransparency = 0.2
+    progressFill.BorderSizePixel = 0
+    progressFill.Parent = progressBg
+    
+    local progressText = Instance.new("TextLabel")
+    progressText.Size = UDim2.new(1, 0, 0, 20)
+    progressText.Position = UDim2.new(0, 0, -1, -5)
+    progressText.BackgroundTransparency = 1
+    progressText.Text = "PUXANDO..."
+    progressText.TextColor3 = CONFIG.NeonColor
+    progressText.TextSize = 14
+    progressText.Font = Enum.Font.GothamBold
+    progressText.Parent = magnetFrame
+    
+    -- ===== DISPLAY DE DINHEIRO =====
+    local moneyFrame = Instance.new("Frame")
+    moneyFrame.Size = UDim2.new(0, 220, 0, 60)
+    moneyFrame.Position = UDim2.new(0.02, 0, 0.02, 0)
+    moneyFrame.BackgroundColor3 = Color3.fromRGB(10, 10, 20)
+    moneyFrame.BackgroundTransparency = 0.3
+    moneyFrame.BorderSizePixel = 1
+    moneyFrame.BorderColor3 = CONFIG.NeonColor
+    moneyFrame.Parent = mainContainer
+    
+    local moneyCorner = Instance.new("UICorner")
+    moneyCorner.CornerRadius = UDim.new(0, 10)
+    moneyCorner.Parent = moneyFrame
+    
+    local moneyIcon = Instance.new("TextLabel")
+    moneyIcon.Size = UDim2.new(0, 40, 1, 0)
+    moneyIcon.BackgroundTransparency = 1
+    moneyIcon.Text = "💰"
+    moneyIcon.TextColor3 = CONFIG.NeonColor
+    moneyIcon.TextSize = 30
+    moneyIcon.TextScaled = true
+    moneyIcon.Font = Enum.Font.GothamBold
+    moneyIcon.Parent = moneyFrame
+    
+    local moneyText = Instance.new("TextLabel")
+    moneyText.Name = "MoneyValue"
+    moneyText.Size = UDim2.new(0.7, 0, 1, 0)
+    moneyText.Position = UDim2.new(0.25, 0, 0, 0)
+    moneyText.BackgroundTransparency = 1
+    moneyText.Text = "0"
+    moneyText.TextColor3 = CONFIG.NeonColor
+    moneyText.TextSize = 28
+    moneyText.TextXAlignment = Enum.TextXAlignment.Left
+    moneyText.Font = Enum.Font.GothamBold
+    moneyText.Parent = moneyFrame
+    
+    -- ===== NOTIFICAÇÕES =====
+    local notifContainer = Instance.new("Frame")
+    notifContainer.Name = "Notifications"
+    notifContainer.Size = UDim2.new(0, 350, 0, 250)
+    notifContainer.Position = UDim2.new(0.02, 0, 0.12, 0)
+    notifContainer.BackgroundTransparency = 1
+    notifContainer.Parent = mainContainer
+    
+    -- ===== INDICADOR DE ALVO =====
+    local targetIndicator = Instance.new("Frame")
+    targetIndicator.Name = "TargetIndicator"
+    targetIndicator.Size = UDim2.new(0, 70, 0, 70)
+    targetIndicator.Position = UDim2.new(0.5, -35, 0.5, -35)
+    targetIndicator.BackgroundTransparency = 1
+    targetIndicator.BorderSizePixel = 2
+    targetIndicator.BorderColor3 = CONFIG.NeonPink
+    targetIndicator.Visible = false
+    targetIndicator.ZIndex = 20
+    targetIndicator.Parent = mainContainer
+    
+    local indicatorCorner = Instance.new("UICorner")
+    indicatorCorner.CornerRadius = UDim.new(1, 0)
+    indicatorCorner.Parent = targetIndicator
+    
+    -- Animação do indicador
+    local indicatorAnim = TweenService:Create(targetIndicator,
+        TweenInfo.new(0.3, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true),
+        {BorderSizePixel = 4}
+    )
+    indicatorAnim:Play()
+    
+    print("✅ UI Criada")
+    
+    return {
+        CrosshairContainer = crosshairContainer,
+        CenterDot = centerDot,
+        OuterRing = outerRing,
+        MagnetFrame = magnetFrame,
+        ProgressFill = progressFill,
+        ProgressText = progressText,
+        MoneyText = moneyText,
+        NotificationContainer = notifContainer,
+        TargetIndicator = targetIndicator
+    }
+end
+
+-- ============================================
+-- SISTEMA DE NOTIFICAÇÃO
+-- ============================================
+local function ShowNotification(container, title, message, color)
+    local notif = Instance.new("Frame")
+    notif.Size = UDim2.new(1, 0, 0, 50)
+    notif.Position = UDim2.new(0, 0, 1, 0)
+    notif.BackgroundColor3 = Color3.fromRGB(15, 15, 30)
+    notif.BackgroundTransparency = 0.2
+    notif.BorderSizePixel = 1
+    notif.BorderColor3 = color or CONFIG.NeonColor
+    notif.Parent = container
+    
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 6)
+    corner.Parent = notif
+    
+    local titleLabel = Instance.new("TextLabel")
+    titleLabel.Size = UDim2.new(1, -10, 0, 22)
+    titleLabel.Position = UDim2.new(0.02, 0, 0.05, 0)
+    titleLabel.BackgroundTransparency = 1
+    titleLabel.Text = title
+    titleLabel.TextColor3 = color or CONFIG.NeonColor
+    titleLabel.TextSize = 14
+    titleLabel.Font = Enum.Font.GothamBold
+    titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+    titleLabel.Parent = notif
+    
+    local msgLabel = Instance.new("TextLabel")
+    msgLabel.Size = UDim2.new(1, -10, 0, 22)
+    msgLabel.Position = UDim2.new(0.02, 0, 0.5, 0)
+    msgLabel.BackgroundTransparency = 1
+    msgLabel.Text = message
+    msgLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+    msgLabel.TextSize = 12
+    msgLabel.Font = Enum.Font.Gotham
+    msgLabel.TextXAlignment = Enum.TextXAlignment.Left
+    msgLabel.Parent = notif
+    
+    -- Animação de entrada
+    notif.BackgroundTransparency = 1
+    notif.Position = UDim2.new(0, 0, 1, 20)
+    
+    local enterTween = TweenService:Create(notif,
+        TweenInfo.new(0.3, Enum.EasingStyle.Back),
+        {BackgroundTransparency = 0.2, Position = UDim2.new(0, 0, 1, 0)}
+    )
+    enterTween:Play()
+    
+    -- Auto destruir
+    task.wait(3.5)
+    
+    local exitTween = TweenService:Create(notif,
+        TweenInfo.new(0.2, Enum.EasingStyle.Quad),
+        {BackgroundTransparency = 1, Position = UDim2.new(0, 0, 1, 20)}
+    )
+    exitTween:Play()
+    exitTween.Completed:Wait()
+    notif:Destroy()
+    
+    -- Reposicionar notificações
+    for _, n in pairs(container:GetChildren()) do
+        local newPos = n.Position.Y.Offset - 55
+        TweenService:Create(n, TweenInfo.new(0.2), {Position = UDim2.new(0, 0, 1, newPos)}):Play()
+    end
+end
+
+-- ============================================
+-- AIM ASSIST (VISUAL APENAS - SEGURO)
+-- ============================================
+local AimAssist = {
+    IsActive = false,
+    CurrentTarget = nil
+}
+
+function AimAssist:FindTarget()
+    local character = player.Character
+    local rootPart = character and character:FindFirstChild("HumanoidRootPart")
+    if not rootPart then return nil end
+    
+    local bestTarget = nil
+    local bestScore = 0
+    local mousePos = Vector2.new(mouse.X, mouse.Y)
+    
+    for _, targetPlayer in pairs(Players:GetPlayers()) do
+        if targetPlayer ~= player then
+            local targetChar = targetPlayer.Character
+            local targetHRP = targetChar and targetChar:FindFirstChild("HumanoidRootPart")
+            local humanoid = targetChar and targetChar:FindFirstChild("Humanoid")
+            
+            if targetHRP and humanoid and humanoid.Health > 0 then
+                local distance = (targetHRP.Position - rootPart.Position).Magnitude
+                
+                if distance <= CONFIG.MaxAimDistance then
+                    local screenPoint = camera:WorldToScreenPoint(targetHRP.Position)
+                    
+                    if screenPoint.Z > 0 then
+                        local targetPos = Vector2.new(screenPoint.X, screenPoint.Y)
+                        local angleDist = (targetPos - mousePos).Magnitude
+                        
+                        if angleDist <= CONFIG.AimRadius then
+                            local score = (CONFIG.AimRadius - angleDist) * 10
+                            score = score - (distance * 0.5)
+                            
+                            if angleDist <= CONFIG.MagnetRadius then
+                                score = score + 50
+                            end
+                            
+                            if score > bestScore then
+                                bestScore = score
+                                bestTarget = targetChar
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    
+    return bestTarget
+end
+
+-- Atualizar indicador de alvo
+RunService.RenderStepped:Connect(function()
+    if AimAssist.IsActive then
+        AimAssist.CurrentTarget = AimAssist:FindTarget()
+        
+        if AimAssist.CurrentTarget then
+            local targetHRP = AimAssist.CurrentTarget:FindFirstChild("HumanoidRootPart")
+            if targetHRP then
+                local screenPos = camera:WorldToScreenPoint(targetHRP.Position)
+                if screenPos and screenPos.Z > 0 then
+                    ui.TargetIndicator.Visible = true
+                    ui.TargetIndicator.Position = UDim2.new(0, screenPos.X - 35, 0, screenPos.Y - 35)
+                end
+            end
+        else
+            ui.TargetIndicator.Visible = false
+        end
+    else
+        ui.TargetIndicator.Visible = false
+    end
+end)
+
+-- Ativar/desativar aim assist
+UserInputService.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton2 then
+        AimAssist.IsActive = true
+        ui.OuterRing.ImageColor3 = CONFIG.NeonPink
+    end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton2 then
+        AimAssist.IsActive = false
+        ui.OuterRing.ImageColor3 = CONFIG.NeonColor
+    end
+end)
+
+-- ============================================
+-- SISTEMA DE PUXAR ITENS (MAGNET GRAB)
+-- ============================================
+local MagnetGrab = {
+    IsGrabbing = false,
+    CurrentTarget = nil,
+    Remotes = nil
+}
+
+function MagnetGrab:FindTarget()
+    local character = player.Character
+    local rootPart = character and character:FindFirstChild("HumanoidRootPart")
+    if not rootPart then return nil end
+    
+    local nearest = nil
+    local nearestDist = CONFIG.GrabRadius
+    
+    -- Procurar por partes com atributos específicos
+    for _, part in pairs(Workspace:GetDescendants()) do
+        if part:IsA("BasePart") and (part:GetAttribute("IsGrabbable") or part:GetAttribute("IsMoney")) then
+            local distance = (part.Position - rootPart.Position).Magnitude
+            
+            if distance <= CONFIG.GrabRadius and distance < nearestDist then
+                local screenPoint = camera:WorldToScreenPoint(part.Position)
+                if screenPoint and screenPoint.Z > 0 then
+                    local targetPos = Vector2.new(screenPoint.X, screenPoint.Y)
+                    local mousePos = Vector2.new(mouse.X, mouse.Y)
+                    
+                    if (targetPos - mousePos).Magnitude <= 100 then
+                        nearestDist = distance
+                        nearest = part
+                    end
+                end
+            end
+        end
+    end
+    
+    return nearest
+end
+
+function MagnetGrab:Grab(target)
+    if self.IsGrabbing or not target then return false end
+    
+    self.IsGrabbing = true
+    self.CurrentTarget = target
+    
+    -- Mostrar UI de progresso
+    ui.MagnetFrame.Visible = true
+    ui.ProgressFill.Size = UDim2.new(0, 0, 1, 0)
+    
+    -- Animar barra
+    local tween = TweenService:Create(ui.ProgressFill,
+        TweenInfo.new(CONFIG.GrabTime, Enum.EasingStyle.Linear),
+        {Size = UDim2.new(1, 0, 1, 0)}
+    )
+    tween:Play()
+    
+    -- Efeito visual no alvo
+    local originalColor = target.Color
+    target.Color = CONFIG.NeonColor
+    
+    -- Simular progresso
+    local startTime = tick()
+    local character = player.Character
+    local rootPart = character and character:FindFirstChild("HumanoidRootPart")
+    
+    repeat
+        task.wait()
+        local elapsed = tick() - startTime
+        local progress = math.min(elapsed / CONFIG.GrabTime, 1)
+        
+        ui.ProgressText.Text = string.format("PUXANDO... %.0f%%", progress * 100)
+        
+        -- Puxar gradualmente
+        if target and target.Parent and rootPart then
+            local direction = (rootPart.Position - target.Position).Unit
+            target.Position = target.Position + direction * CONFIG.PullSpeed * (progress + 0.3)
+        end
+        
+        if rootPart and target and (target.Position - rootPart.Position).Magnitude > CONFIG.GrabRadius + 5 then
+            break
+        end
+        
+    until elapsed >= CONFIG.GrabTime or not target or not target.Parent
+    
+    tween:Cancel()
+    ui.MagnetFrame.Visible = false
+    
+    -- Chamar remote do servidor para coletar
+    if target and target.Parent then
+        local isMoney = target:GetAttribute("IsMoney")
+        local value = target:GetAttribute("Value") or 50
+        
+        -- Simular coleta (em produção, chamar RemoteFunction)
+        local currentMoney = tonumber(ui.MoneyText.Text) or 0
+        local newMoney = currentMoney + value
+        ui.MoneyText.Text = tostring(newMoney)
+        
+        if isMoney then
+            ShowNotification(ui.NotificationContainer, "💰 DINHEIRO", string.format("+$%d", value), CONFIG.NeonGreen)
+        else
+            local itemName = target:GetAttribute("ItemName") or "Item"
+            ShowNotification(ui.NotificationContainer, "📦 ITEM", string.format("+%s", itemName), CONFIG.NeonPink)
+        end
+        
+        target:Destroy()
+    end
+    
+    if target then
+        target.Color = originalColor
+    end
+    
+    self.IsGrabbing = false
+    self.CurrentTarget = nil
+    
+    return true
+end
+
+-- ============================================
+-- GERENCIADOR DE DINHEIRO
+-- ============================================
+local MoneyManager = {
+    Balance = CONFIG.StartingMoney
+}
+
+function MoneyManager:UpdateDisplay(uiElement)
+    uiElement.Text = tostring(self.Balance)
+    
+    -- Efeito visual
+    local originalColor = uiElement.TextColor3
+    uiElement.TextColor3 = CONFIG.NeonGreen
+    task.wait(0.15)
+    uiElement.TextColor3 = originalColor
+end
+
+function MoneyManager:AddMoney(amount, uiElement)
+    self.Balance = self.Balance + amount
+    self:UpdateDisplay(uiElement)
+    return self.Balance
+end
+
+-- ============================================
+-- CRIAR ITENS DE TESTE (APENAS PARA DEMONSTRAÇÃO)
+-- ============================================
+local function CreateTestItems()
+    local positions = {
+        Vector3.new(10, 3, 10),
+        Vector3.new(-12, 3, 8),
+        Vector3.new(15, 3, -8),
+        Vector3.new(-8, 3, -12),
+        Vector3.new(5, 3, 20)
+    }
+    
+    for i, pos in pairs(positions) do
+        local part = Instance.new("Part")
+        part.Size = Vector3.new(2, 0.5, 2)
+        part.Position = pos
+        part.Anchored = true
+        part.CanCollide = false
+        part.BrickColor = BrickColor.new("Bright yellow")
+        part.Material = Enum.Material.Neon
+        part.Parent = workspace
+        
+        -- Efeito visual
+        local selectionBox = Instance.new("SelectionBox")
+        selectionBox.Adornee = part
+        selectionBox.Color3 = CONFIG.NeonColor
+        selectionBox.Transparency = 0.7
+        selectionBox.LineThickness = 0.05
+        selectionBox.Parent = part
+        
+        -- Billboard
+        local billboard = Instance.new("BillboardGui")
+        billboard.Size = UDim2.new(0, 60, 0, 30)
+        billboard.StudsOffset = Vector3.new(0, 1.5, 0)
+        billboard.Parent = part
+        
+        local text = Instance.new("TextLabel")
+        text.Size = UDim2.new(1, 0, 1, 0)
+        text.BackgroundTransparency = 1
+        text.Text = i % 2 == 0 and "💎 ITEM" or "💰 $100"
+        text.TextColor3 = i % 2 == 0 and CONFIG.NeonPink or CONFIG.NeonColor
+        text.TextScaled = true
+        text.Font = Enum.Font.GothamBold
+        text.Parent = billboard
+        
+        -- Atributos
+        if i % 2 == 0 then
+            part:SetAttribute("IsGrabbable", true)
+            part:SetAttribute("ItemName", "Crystal #" .. i)
+            part:SetAttribute("Value", 50)
+        else
+            part:SetAttribute("IsMoney", true)
+            part:SetAttribute("Value", 100)
+        end
+    end
+    
+    print("✅ " .. #positions .. " itens de teste criados")
+end
+
+-- ============================================
+-- INPUT E LOOP PRINCIPAL
+-- ============================================
+local ui
+local remotes
+
+-- Inicialização
+local function Init()
+    print("🎯 Iniciando Sistema de Precisão...")
+    
+    ui = CreateUI()
+    
+    -- Setup remotes
+    remotes = SetupRemotes()
+    
+    -- Inicializar dinheiro
+    MoneyManager.Balance = CONFIG.StartingMoney
+    MoneyManager:UpdateDisplay(ui.MoneyText)
+    
+    -- Criar itens de teste
+    task.wait(0.5)
+    CreateTestItems()
+    
+    -- Mostrar tutorial
+    ShowNotification(ui.NotificationContainer, "🎮 SISTEMA PRONTO!", 
+        "Aponte para itens e pressione F para coletar", CONFIG.NeonColor)
+    
+    -- Input para coletar (tecla F)
+    UserInputService.InputBegan:Connect(function(input, gameProcessed)
+        if gameProcessed then return end
+        
+        if input.KeyCode == Enum.KeyCode.F then
+            local target = MagnetGrab:FindTarget()
+            
+            if target then
+                -- Mostrar indicador
+                local screenPos = camera:WorldToScreenPoint(target.Position)
+                if screenPos and screenPos.Z > 0 then
+                    ui.TargetIndicator.Visible = true
+                    ui.TargetIndicator.Position = UDim2.new(0, screenPos.X - 35, 0, screenPos.Y - 35)
+                    task.wait(0.15)
+                    ui.TargetIndicator.Visible = false
+                end
+                
+                MagnetGrab:Grab(target)
+            else
+                -- Feedback visual sem alvo
+                ui.CenterDot.BackgroundColor3 = Color3.fromRGB(255, 0, 0)
+                task.wait(0.1)
+                ui.CenterDot.BackgroundColor3 = CONFIG.NeonColor
+            end
+        end
+    end)
+    
+    -- Efeito de clique
+    mouse.Button1Down:Connect(function()
+        -- Efeito de recuo na mira
+        local originalSize = ui.CrosshairContainer.Size
+        local shrinkTween = TweenService:Create(ui.CrosshairContainer,
+            TweenInfo.new(0.05, Enum.EasingStyle.Quad),
+            {Size = UDim2.new(0, 90, 0, 90)}
+        )
+        shrinkTween:Play()
+        shrinkTween.Completed:Wait()
+        
+        TweenService:Create(ui.CrosshairContainer,
+            TweenInfo.new(0.1, Enum.EasingStyle.Back),
+            {Size = originalSize}
+        ):Play()
+        
+        -- Hit effect se tiver alvo
+        if AimAssist.CurrentTarget then
+            ui.CenterDot.BackgroundColor3 = CONFIG.NeonPink
+            task.wait(0.08)
+            ui.CenterDot.BackgroundColor3 = CONFIG.NeonColor
+        end
+    end)
+    
+    print("✅ Sistema rodando!")
+end
+
+-- Executar
+pcall(Init)
